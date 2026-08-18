@@ -1,7 +1,7 @@
 # **Glasses**: Design Document
 
 - **Author**: Yashas
-- **Date**: 
+  - **Date**: 16th Aug 2026 - 17th Aug 2026
 - **Status**: Draft
 - **Reviewer**: Shrihari
 - **PRD**: [PRD.md](PRD.md)
@@ -58,3 +58,18 @@ Read the [PRD.md](./PRD.md) file, it will tell you want we are building. In summ
 There are three parts-Recorder, Storage and Display
 
 ![](./Glasses-overview.drawio.png)
+
+### The Recorder
+
+It is a background system level process which will record system resource data every 30s and consumes less than 50MB and less than 1% of CPU
+
+### The Storage
+
+It is the SQLite database which stores system resources data. It is written by The Recorder and is read by The Display. 
+
+### The Display
+
+This is CLI tool which will show the user the data regarding system resources
+
+## Detailed Design
+
