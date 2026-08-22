@@ -1,6 +1,6 @@
 # Glasses — Progress
 
-Last updated: **16 Aug 2026**
+Last updated: **23 Aug 2026**
 
 ## What this project is
 
@@ -17,7 +17,7 @@ A PC resource monitor: a background recorder samples system usage to local stora
 | Stage | Artifact | Status |
 |---|---|---|
 | 1. Define the problem | `PRD.md` | ✅ **Approved** (Shreyas, 9 Aug 2026) |
-| 2. Design the solution | `DESIGN.md` | 🔨 In progress — Technical goals & non-goals done (G1–G26, NG1–NG9), Overview drafted with diagram. Detailed design not started. |
+| 2. Design the solution | `DESIGN.md` | 🔨 In progress — Technical goals & non-goals done (G1–G26, NG1–NG9), Overview drafted with diagram. Detailed Design: "The Recorder" subsection now written as a local decision table (D1–D12), covering boot mechanism, language/runtime, metrics/modules, logging, clock-change detection, single-instance mutex, CPU% priming, sampling-loop timing, per-value and per-write failure handling, and battery absence-vs-zero. 3 gaps remain in Recorder (see below). Storage and Display subsections not started. |
 | 3. Break down the work | `PLAN.md` | ⬜ Not started |
 | 4. Build | PRs | ⬜ Not started |
 | 5. Test | test suite | ⬜ Not started |
@@ -65,7 +65,25 @@ From the PRD, approved:
 
 **Overview — drafted.** Three components (Recorder, Storage, Display) inside an OS boundary, plus a User/CLI actor. Diagram at `Glasses-overview.drawio.png`, reviewed and embedded.
 
-**Detailed design, Alternatives considered, Risks, Testing strategy, Open issues — not started.**
+**Detailed design ("The Recorder") — largely done, see below. Storage, Display, Alternatives considered, Risks, Testing strategy, Open issues — not started.**
+
+### The Recorder — now a local decision table (D1–D12, numbered within that section only, distinct from this file's D1–D9 tracking list below)
+
+- **D1** Boot mechanism: Windows Scheduled Task `GlassesRecorder`, registered once at install (`glasses start`) via `schtasks /Create`, trigger `ONSTART`, account `SYSTEM`
+- **D2** Language/runtime: Python 3, compiled to a standalone `.exe` via Nuitka (rejected-alternatives writeup for Alternatives Considered still owed)
+- **D3** Metrics & modules: CPU/memory/disk/network/battery/top-10 processes via `psutil` and `wmi`; also `logging`, `sqlite3`, `datetime`
+- **D4** Logging: `C:\ProgramData\Glasses\logs\glasses_recorder.log`, 7-day retention (the sentence on whether logs count against the 150MB storage budget is still grammatically ambiguous — needs a clean rewrite)
+- **D5** Clock-change detection: compare UTC vs. monotonic elapsed time between samples
+- **D6** Single-instance enforcement: resolved this session — named mutex `Global\GlassesRecorderMutex`; second instance sees `ERROR_ALREADY_EXISTS`, logs, exits. (The user-facing "you're already running" message is Display's job, not Recorder's — deferred to when Display gets written.)
+- **D7** CPU% priming: resolved this session — one throwaway `cpu_percent(interval=None)` call at recorder startup (system-wide); any PID seen for the first time is individually primed and shown as `-` for that one sample, not a misleading `0%`
+- **D8** Sampling loop: `sleep_time + record_time = 30s` (sleep is computed as the remainder after the work, not a hardcoded number) — resolves the drift a naive `sleep(30)` would have
+- **D9–D11** Failure handling: a failed per-value read logs and shows `-` for that field; a failed write logs and the recorder continues; both keep one bad reading from taking down the whole sample or the process
+- **D12** Battery: `psutil.sensors_battery()` — `None` → empty cell, present-but-drained → literal `0%`
+
+**Gaps still open in Recorder, unaddressed as of this session:**
+1. **Crash/restart resume (G5, G6).** The `ONSTART` trigger only fires at boot — nothing yet relaunches the recorder if it dies mid-run. Direction discussed: Task Scheduler's restart-on-failure task settings (not the trigger), e.g. retry every 1 minute up to a few times — needs `schtasks /Create /XML` or the PowerShell `ScheduledTasks` module, since plain `schtasks` CLI flags don't expose this. Budget: G6 allows <1% of 2880 daily samples lost, roughly 14 minutes of downtime.
+2. **Disk enumeration logic (G22, NG8).** Direction discussed: WMI's `MSFT_PhysicalDisk.BusType` — internal buses (SATA/NVMe/SCSI/RAID) tracked, USB excluded. Not yet written into DESIGN.md.
+3. **Network interface enumeration logic (G26, NG9).** Direction discussed: WMI's `Win32_NetworkAdapter.PhysicalAdapter` boolean — `True` = physical NIC, `False` = virtual/VPN/Bluetooth PAN. Not yet written into DESIGN.md.
 
 ---
 
@@ -73,15 +91,15 @@ From the PRD, approved:
 
 | # | Decision | Status |
 |---|---|---|
-| D1 | Language and runtime | Python assumed throughout goals discussion; needs formal writeup with rejected alternatives |
-| D2 | How the recorder starts and stays alive (Task Scheduler vs Service vs startup entry) | **Still fully open.** Foundational — G11, G20, and G21 all imply a system-level mechanism, but the actual choice hasn't been made |
+| D1 | Language and runtime | ✅ Resolved — Python 3 + Nuitka (see above). Rejected-alternatives writeup for Alternatives Considered still owed |
+| D2 | How the recorder starts and stays alive (Task Scheduler vs Service vs startup entry) | ✅ Resolved — Scheduled Task, `ONSTART`, `SYSTEM` account (see above), drafted into DESIGN.md |
 | D3 | Storage engine | SQLite assumed throughout goals discussion; needs formal writeup with rejected alternatives |
 | D4 | Schema shape | Most of the hard calls are made (see highlights above) — needs to be written up as an actual schema, including the variable-length shape needed for multi-disk and multi-network data |
 | D5 | How gaps are represented | ✅ Resolved — see highlights above (G14, G15, NG6) |
-| D6 | Concurrent access | ✅ Resolved — G7, G8 (read/write non-blocking, atomic reads), G20 (single-instance enforcement) |
-| D7 | Pruning at the size cap | **Still fully open.** Original PRD open question, never revisited during the goals work |
-| D8 | CPU % semantics — what does the first sample report | ✅ Resolved in discussion (priming call, see highlights above) — **not yet written into DESIGN.md**, needs to land as a goal or in Detailed Design |
-| D9 | Install and uninstall | Partially resolved — G11/G13 (enable/disable behavior), G25 (uninstall removes all data) are decided; the underlying mechanism depends on D2 |
+| D6 | Concurrent access | Partially resolved — G8 (atomic reads) decided. **G20 (single-instance enforcement) ✅ resolved this session** — named mutex, written into DESIGN.md's Recorder table (its D6). **G7 (reads must not block writes) still open** — explicitly scoped to Storage during this session's discussion, not Recorder; needs writing up once Storage's subsection starts |
+| D7 | Pruning at the size cap | **Still fully open.** Original PRD open question, never revisited |
+| D8 | CPU % semantics — what does the first sample report | ✅ Resolved and written into DESIGN.md this session (Recorder's D7) — covers both the recorder-startup priming call and the mid-run new-process case, both shown as `-` for their first sample |
+| D9 | Install and uninstall | Partially resolved — G11/G13 (enable/disable behavior), G25 (uninstall removes all data) are decided; mechanism now depends on D2 (resolved) but pruning ownership (R5, D7) and which component owns lifecycle commands (start/stop/status/uninstall) is still unassigned across Recorder/Storage/Display |
 
 ---
 
@@ -112,10 +130,12 @@ From the PRD, approved:
 
 ## Next actions
 
-1. Decide D2 (recorder lifecycle mechanism) and D7 (pruning at size cap) — both still fully open
-2. Write the CPU% priming decision (D8) into DESIGN.md — currently only decided in conversation, not on paper
-3. Write Detailed Design: formalize D1/D3 (Python, SQLite) with rejected alternatives, the D4 schema, and key flows (enable/disable, sampling loop, query path)
-4. Write Alternatives considered, Risks, Testing strategy, Open issues
-5. Confirm Shrihari as senior engineer reviewer
-6. Send DESIGN for review before writing any code
-7. Create the repo and protect `main`
+1. Finish Recorder's 3 remaining gaps: crash/restart resume (G5/G6), disk enumeration logic (G22/NG8), network enumeration logic (G26/NG9) — directions discussed this session, not yet written into DESIGN.md (slots D13+ reserved in the table)
+2. Fix the ambiguous "logs will the 150MB budget" sentence in Recorder's D4
+3. Decide D7 (pruning at size cap) — still fully open
+4. Write Storage and Display subsections of Detailed Design, including D3/D4 (SQLite writeup with rejected alternatives, and the actual schema)
+5. Write rejected-alternatives writeup for D1/D2 (Python+Nuitka, Task Scheduler) into Alternatives Considered
+6. Write Risks, Testing strategy, Open issues
+7. Confirm Shrihari as senior engineer reviewer
+8. Send DESIGN for review before writing any code
+9. Create the repo and protect `main`

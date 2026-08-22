@@ -1,7 +1,7 @@
 # **Glasses**: Design Document
 
 - **Author**: Yashas
-  - **Date**: 16th Aug 2026 - 17th Aug 2026
+- **Date**: 16th Aug 2026 - 17th Aug 2026
 - **Status**: Draft
 - **Reviewer**: Shrihari
 - **PRD**: [PRD.md](PRD.md)
@@ -73,3 +73,30 @@ This is CLI tool which will show the user the data regarding system resources
 
 ## Detailed Design
 
+### Components
+
+As mentioned above this tool has three parts. Recorder, Storage, Display.
+
+#### The Recorder
+
+| **Decision** | **Description** |
+| --- | --- |
+| D1 | The Recorder will be a scheduled task under Windows Task Scheduler named GlassesRecorder. The task is registered once, at install time (`glasses start`), via `schtasks /Create`. The task's trigger is ONSTART, running under the SYSTEM account, this is what actually launches the recorder on every subsequent boot. The GlassesRecorder is a system process running while the system is ON. |
+| D2 | The recorder will be written in python3 and compiled to bin(exe application) via Nuitka. |
+| D3 | Recorder will record the system data such as CPU info with %, memory, disks, NetworkIO and battery and top 10 process using python modules like `psutil` and `wmi`. The recorder will also use `logging`, `sqlite3`, and `datetime` for datetime(both monotonic and UTC timestamps). |
+| D4 | The logging module is used for logging for debugging. The logging is written to a .log file in C:\ProgramData\Glasses\logs\glasses_recorder.log. The logs older than 7 days gets deleted. The logs will the 150MB budget assigned to storage. |
+| D5 | From the start the recorder will keep checking both UTC and relative(monotonic) timestamps. If there is a jump in UTC and no jump in relative timestamps, it means the system time had been changed. |
+| D6 | On launch, recorder will create the mutex. If GetLastError() is not ERROR_ALREADY_EXISTS, it holds the mutex and proceeds. If GetLastError() is ERROR_ALREADY_EXISTS then another instance is running, recorder will log it and exit. The recorder will have prefix of Global\ making a system wide namespace. |
+| D7 | The recorder will use psutil's cpu_percent with interval=None. When the recorder starts it will call cpu_percent once and its value gets thrown away. For that first (priming) sample, the process's CPU% is stored as -, not the raw value psutil returns, since it isn't a real reading yet. |
+| D8 | The sleep_time+record_time=30s, record_time is time need for recording a sample and sleep_time is time recorder was sleeping |
+| D9 | The recorder will only write samples to storage |
+| D10 | If recorder is unable to get a value it will log the error and put "-" in place of the value |
+| D11 | If recorder is unable to write a sample it gets logged and the recorder continues work as usual |
+| D12 | The recorder will have No battery if there is no battery attached and 0% if the battery is empty as it uses psutil.sensors_battery() |
+| D13 |  |
+| D14 |  |
+| D15 |  |
+| D16 |  |
+| D17 |  |
+| D18 |  |
+| D19 |  |
