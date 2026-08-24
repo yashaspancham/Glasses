@@ -1,6 +1,6 @@
 # Glasses — Progress
 
-Last updated: **23 Aug 2026**
+Last updated: **24 Aug 2026**
 
 ## What this project is
 
@@ -17,7 +17,7 @@ A PC resource monitor: a background recorder samples system usage to local stora
 | Stage | Artifact | Status |
 |---|---|---|
 | 1. Define the problem | `PRD.md` | ✅ **Approved** (Shreyas, 9 Aug 2026) |
-| 2. Design the solution | `DESIGN.md` | 🔨 In progress — Technical goals & non-goals done (G1–G26, NG1–NG9), Overview drafted with diagram. Detailed Design: "The Recorder" subsection now written as a local decision table (D1–D12), covering boot mechanism, language/runtime, metrics/modules, logging, clock-change detection, single-instance mutex, CPU% priming, sampling-loop timing, per-value and per-write failure handling, and battery absence-vs-zero. 3 gaps remain in Recorder (see below). Storage and Display subsections not started. |
+| 2. Design the solution | `DESIGN.md` | 🔨 In progress — Technical goals & non-goals done (G1–G26, NG1–NG9), Overview drafted with diagram. Detailed Design: "The Recorder" subsection now complete (D1–D15) — boot mechanism, language/runtime, metrics/modules, logging, timestamp storage, single-instance mutex, CPU% priming, sampling-loop timing, per-value and per-write failure handling, battery absence-vs-zero, disk enumeration, network adapter enumeration, first-sample timing. "The Storage" subsection drafted (D16–D20 — SQLite chosen, Postgres/MySQL and flat files rejected). "The Database" section drafted with the actual table list (sample, memory, disk, network_interface, network_io, timestamps, process). 1 gap remains in Recorder (see below); a few schema details and the Display subsection remain open. |
 | 3. Break down the work | `PLAN.md` | ⬜ Not started |
 | 4. Build | PRs | ⬜ Not started |
 | 5. Test | test suite | ⬜ Not started |
@@ -65,25 +65,36 @@ From the PRD, approved:
 
 **Overview — drafted.** Three components (Recorder, Storage, Display) inside an OS boundary, plus a User/CLI actor. Diagram at `Glasses-overview.drawio.png`, reviewed and embedded.
 
-**Detailed design ("The Recorder") — largely done, see below. Storage, Display, Alternatives considered, Risks, Testing strategy, Open issues — not started.**
+**Detailed design ("The Recorder") — done, see below (1 gap remains — crash/restart resume still needs writing into Risks). "The Storage" and "The Database" — drafted (SQLite choice with rejected alternatives, and a first-pass table list). Display, Alternatives considered, Risks, Testing strategy, Open issues — not started.**
 
-### The Recorder — now a local decision table (D1–D12, numbered within that section only, distinct from this file's D1–D9 tracking list below)
+### The Recorder — now a local decision table (D1–D15, numbered within that section only, distinct from this file's D1–D9 tracking list below)
 
 - **D1** Boot mechanism: Windows Scheduled Task `GlassesRecorder`, registered once at install (`glasses start`) via `schtasks /Create`, trigger `ONSTART`, account `SYSTEM`
 - **D2** Language/runtime: Python 3, compiled to a standalone `.exe` via Nuitka (rejected-alternatives writeup for Alternatives Considered still owed)
 - **D3** Metrics & modules: CPU/memory/disk/network/battery/top-10 processes via `psutil` and `wmi`; also `logging`, `sqlite3`, `datetime`
-- **D4** Logging: `C:\ProgramData\Glasses\logs\glasses_recorder.log`, 7-day retention (the sentence on whether logs count against the 150MB storage budget is still grammatically ambiguous — needs a clean rewrite)
-- **D5** Clock-change detection: compare UTC vs. monotonic elapsed time between samples
-- **D6** Single-instance enforcement: resolved this session — named mutex `Global\GlassesRecorderMutex`; second instance sees `ERROR_ALREADY_EXISTS`, logs, exits. (The user-facing "you're already running" message is Display's job, not Recorder's — deferred to when Display gets written.)
-- **D7** CPU% priming: resolved this session — one throwaway `cpu_percent(interval=None)` call at recorder startup (system-wide); any PID seen for the first time is individually primed and shown as `-` for that one sample, not a misleading `0%`
+- **D4** Logging: `C:\ProgramData\Glasses\logs\glasses_recorder.log`, 7-day retention, counts against the 150MB storage budget (wording fixed this session — was grammatically ambiguous)
+- **D5** Timestamp storage: UTC, local machine time, and monotonic timestamps all stored per sample (wording tightened this session; note — this sentence no longer states the clock-change *detection* logic itself, see open item below)
+- **D6** Single-instance enforcement: named mutex `Global\GlassesRecorderMutex`; second instance sees `ERROR_ALREADY_EXISTS`, logs, exits. (The user-facing "you're already running" message is Display's job, not Recorder's — deferred to when Display gets written.)
+- **D7** CPU% priming: one throwaway `cpu_percent(interval=None)` call at recorder startup (system-wide); any PID seen for the first time is individually primed and shown as `-` for that one sample, not a misleading `0%`
 - **D8** Sampling loop: `sleep_time + record_time = 30s` (sleep is computed as the remainder after the work, not a hardcoded number) — resolves the drift a naive `sleep(30)` would have
 - **D9–D11** Failure handling: a failed per-value read logs and shows `-` for that field; a failed write logs and the recorder continues; both keep one bad reading from taking down the whole sample or the process
 - **D12** Battery: `psutil.sensors_battery()` — `None` → empty cell, present-but-drained → literal `0%`
+- **D13** Disk enumeration: `psutil.disk_partitions(all=False)` (Windows `GetDriveType()`'s fixed/removable split; also gives drive letters for free) — written into DESIGN.md this session
+- **D14** Network adapter enumeration: WMI `Win32_NetworkAdapter.PhysicalAdapter` filter, enumerated once at startup, joined to `psutil.net_io_counters(pernic=True)`'s per-NIC keys via `NetConnectionID` — written into DESIGN.md this session
+- **D15** First sample: recorded 30s after the recorder is enabled — written into DESIGN.md this session
 
-**Gaps still open in Recorder, unaddressed as of this session:**
-1. **Crash/restart resume (G5, G6).** ✅ **Decided (2026-08-23): accepted as a known v1 risk, not engineered around.** If the recorder crash-loops past Task Scheduler's retry limit, it stays down until next reboot — considered acceptable given how often Windows machines reboot anyway (update cycles, sleep issues) and that this is a monitoring tool, not critical infrastructure. Options considered and rejected for v1: a second time-based Task Scheduler trigger as a self-healing backstop (cheap, builds on the D6 mutex, but adds a moving part); switching from Scheduled Task to a Windows Service with SCM recovery policy (more robust, no hard retry ceiling, but reopens the D1 boot-mechanism decision). **Still needs to be written into DESIGN.md's Risks section** (what the risk is, why accepted, what would trigger revisiting it) — not yet drafted.
-2. **Disk enumeration logic (G22, NG8).** ✅ **Decided (2026-08-23): use `psutil.disk_partitions(all=False)` for v1**, which on Windows is backed by `GetDriveType()`'s `DRIVE_FIXED`/`DRIVE_REMOVABLE` split. This also solves the physical-disk-to-drive-letter mapping for free (psutil returns drive letters directly). Known limitation, accepted rather than engineered around: an internal SD-card-reader slot can report as removable, and some external docked/eSATA drives can report as fixed — occasional misclassification is an accepted v1 tradeoff. Rejected alternative: `MSFT_PhysicalDisk.BusType` (a different WMI namespace, `root\Microsoft\Windows\Storage`) — more accurate bus-type classification, but doesn't by itself map physical disks to drive letters (would need `Win32_DiskDrive`'s associator classes in `root\cimv2` to do that cleanly) — more correct but more implementation work than v1 warrants. **Still needs to be written into DESIGN.md's Recorder decision table** — not yet drafted.
-3. **Network interface enumeration logic (G26, NG9).** ✅ **Decided (2026-08-23): enumerate `Win32_NetworkAdapter` once at recorder startup (cached, not re-queried each sample), filter to `PhysicalAdapter == True`, and build a set of `NetConnectionID` values from that filtered list.** Each sample, match that set against `psutil.net_io_counters(pernic=True)`'s per-NIC keys (join on `NetConnectionID`, not WMI's own `Name`, which is a verbose driver string that won't match psutil's interface names). Known limitation, accepted rather than engineered around: `PhysicalAdapter` occasionally misclassifies adapters created by VPN clients, Hyper-V virtual switches, or some vendor NIC-teaming drivers — same class of tradeoff as the disk `GetDriveType` approximation. No simpler psutil-only shortcut exists (unlike disks) — psutil has no built-in physical/virtual distinction for NICs, so WMI is required here. **Still needs to be written into DESIGN.md's Recorder decision table** — not yet drafted.
+**Gaps still open in Recorder:**
+1. **Crash/restart resume (G5, G6).** Decided (2026-08-23): accepted as a known v1 risk, not engineered around — if the recorder crash-loops past Task Scheduler's retry limit, it stays down until next reboot. Options considered and rejected for v1: a second time-based Task Scheduler trigger as a self-healing backstop; switching to a Windows Service with SCM recovery policy (reopens the D1 boot-mechanism decision). **Still needs to be written into DESIGN.md's Risks section** — not yet drafted. This is now the only undrafted Recorder gap; disk and network enumeration (below) were written in this session.
+
+### The Storage (D16–D20) and The Database — drafted this session
+
+- **Storage engine (D16–D20):** SQLite. Rejected Postgres/MySQL (needs a running server process — conflicts with G1's CPU/memory budget and the local-only non-goal) and flat files/CSV (no indexed queries, no write atomicity for G8, poor fit for variable-length multi-disk/NIC data).
+- **Table list (The Database section):** `sample`, `memory`, `disk`, `network_interface`, `network_io`, `timestamps`, `process` — see DESIGN.md for exact columns.
+- **Network per-channel tracking resolved in discussion:** rather than one aggregate `NetworkIO` row per sample, split into `network_interface(id, connection_id)` (a lookup table populated once from D14's WMI enumeration) and `network_io(sample_id, interface_id, bytes_sent, bytes_recv)` (one row per physical interface per sample, values from psutil). The aggregate total is computed at read time (`SUM(...) WHERE sample_id = ?`) rather than stored, so it can't drift out of sync with the per-channel rows. This is written into DESIGN.md's Database section.
+- **Not yet written into DESIGN.md** (discussed in conversation, not committed to the doc):
+  - Explicit primary keys for `disk` (`sample_id, partition`) and `process` (`sample_id, resource_top_type, rank`) — both are one-to-many per sample and currently have no stated PK.
+  - Gap representation: leaning towards no marker row at all — a gap is just the absence of `sample` rows for that period (satisfies R7 without a schema change). Open question: what delta between consecutive `utc_timestamp`s Display should treat as "system was off" vs. normal scheduling jitter from D8 (a candidate number floated: 1.5× the interval, 45s) — not decided, not written anywhere.
+  - Clock-change detection (G19): direction floated is a Display-time computation over the three stored timestamps (D5) rather than a flag stored by the Recorder — not decided, not written anywhere.
 
 ---
 
@@ -93,8 +104,8 @@ From the PRD, approved:
 |---|---|---|
 | D1 | Language and runtime | ✅ Resolved — Python 3 + Nuitka (see above). Rejected-alternatives writeup for Alternatives Considered still owed |
 | D2 | How the recorder starts and stays alive (Task Scheduler vs Service vs startup entry) | ✅ Resolved — Scheduled Task, `ONSTART`, `SYSTEM` account (see above), drafted into DESIGN.md |
-| D3 | Storage engine | SQLite assumed throughout goals discussion; needs formal writeup with rejected alternatives |
-| D4 | Schema shape | Most of the hard calls are made (see highlights above) — needs to be written up as an actual schema, including the variable-length shape needed for multi-disk and multi-network data |
+| D3 | Storage engine | ✅ Resolved — SQLite, with Postgres/MySQL and flat files rejected (DESIGN.md D16–D20) |
+| D4 | Schema shape | Mostly resolved — table list drafted in DESIGN.md's Database section, including the network per-channel split (`network_interface`/`network_io`). Still open: explicit PKs for `disk`/`process`, and how gaps + clock-change flag get represented (see Storage/Database notes above) |
 | D5 | How gaps are represented | ✅ Resolved — see highlights above (G14, G15, NG6) |
 | D6 | Concurrent access | Partially resolved — G8 (atomic reads) decided. **G20 (single-instance enforcement) ✅ resolved this session** — named mutex, written into DESIGN.md's Recorder table (its D6). **G7 (reads must not block writes) still open** — explicitly scoped to Storage during this session's discussion, not Recorder; needs writing up once Storage's subsection starts |
 | D7 | Pruning at the size cap | **Still fully open.** Original PRD open question, never revisited |
@@ -130,12 +141,13 @@ From the PRD, approved:
 
 ## Next actions
 
-1. Finish Recorder's 3 remaining gaps: crash/restart resume (G5/G6), disk enumeration logic (G22/NG8), network enumeration logic (G26/NG9) — directions discussed this session, not yet written into DESIGN.md (slots D13+ reserved in the table)
-2. Fix the ambiguous "logs will the 150MB budget" sentence in Recorder's D4
-3. Decide D7 (pruning at size cap) — still fully open
-4. Write Storage and Display subsections of Detailed Design, including D3/D4 (SQLite writeup with rejected alternatives, and the actual schema)
-5. Write rejected-alternatives writeup for D1/D2 (Python+Nuitka, Task Scheduler) into Alternatives Considered
-6. Write Risks, Testing strategy, Open issues
-7. Confirm Shrihari as senior engineer reviewer
-8. Send DESIGN for review before writing any code
-9. Create the repo and protect `main`
+1. Write crash/restart resume (G5/G6) into DESIGN.md's Risks section — last undrafted Recorder gap
+2. Add explicit primary keys to `disk` and `process` in the Database schema
+3. Decide and write down the gap-marker threshold (candidate: 45s) and clock-change detection ownership (leaning Display-side) — currently only discussed, not in DESIGN.md
+4. Decide D7 (pruning at size cap) — still fully open
+5. Write the Display subsection of Detailed Design
+6. Write rejected-alternatives writeup for D1/D2 (Python+Nuitka, Task Scheduler) into Alternatives Considered
+7. Write Risks, Testing strategy, Open issues
+8. Confirm Shrihari as senior engineer reviewer
+9. Send DESIGN for review before writing any code
+10. Create the repo and protect `main`
