@@ -84,8 +84,8 @@ As mentioned above this tool has three parts. Recorder, Storage, Display.
 | D1 | The Recorder will be a scheduled task under Windows Task Scheduler named GlassesRecorder. The task is registered once, at install time (`glasses start`), via `schtasks /Create`. The task's trigger is ONSTART, running under the SYSTEM account, this is what actually launches the recorder on every subsequent boot. The GlassesRecorder is a system process running while the system is ON. |
 | D2 | The recorder will be written in python3 and compiled to bin(exe application) via Nuitka. |
 | D3 | Recorder will record the system data such as CPU info with %, memory, disks, NetworkIO and battery and top 10 process using python modules like `psutil` and `wmi`. The recorder will also use `logging`, `sqlite3`, and `datetime` for datetime(both monotonic and UTC timestamps). |
-| D4 | The logging module is used for logging for debugging. The logging is written to a .log file in C:\ProgramData\Glasses\logs\glasses_recorder.log. The logs older than 7 days gets deleted. The logs will the 150MB budget assigned to storage. |
-| D5 | From the start the recorder will keep checking both UTC and relative(monotonic) timestamps. If there is a jump in UTC and no jump in relative timestamps, it means the system time had been changed. |
+| D4 | The logging module is used for logging for debugging. The logging is written to a .log file in C:\ProgramData\Glasses\logs\glasses_recorder.log. The logs older than 7 days gets deleted. The logs will use the 150MB budget assigned to storage. |
+| D5 | From the start the recorder will keep storing both UTC, machine's local time and relative(monotonic) timestamps. |
 | D6 | On launch, recorder will create the mutex. If GetLastError() is not ERROR_ALREADY_EXISTS, it holds the mutex and proceeds. If GetLastError() is ERROR_ALREADY_EXISTS then another instance is running, recorder will log it and exit. The recorder will have prefix of Global\ making a system wide namespace. |
 | D7 | The recorder will use psutil's cpu_percent with interval=None. When the recorder starts it will call cpu_percent once and its value gets thrown away. For that first (priming) sample, the process's CPU% is stored as -, not the raw value psutil returns, since it isn't a real reading yet. |
 | D8 | The sleep_time+record_time=30s, record_time is time need for recording a sample and sleep_time is time recorder was sleeping |
@@ -93,10 +93,21 @@ As mentioned above this tool has three parts. Recorder, Storage, Display.
 | D10 | If recorder is unable to get a value it will log the error and put "-" in place of the value |
 | D11 | If recorder is unable to write a sample it gets logged and the recorder continues work as usual |
 | D12 | The recorder will have No battery if there is no battery attached and 0% if the battery is empty as it uses psutil.sensors_battery() |
-| D13 |  |
-| D14 |  |
-| D15 |  |
-| D16 |  |
-| D17 |  |
-| D18 |  |
-| D19 |  |
+| D13 | The recorder will use psutil.disk_partitions(all=False) to get disk info |
+| D14 | The recorder identifies physical network adapters via WMI's Win32_NetworkAdapter.PhysicalAdapter boolean, enumerated once at startup (not re-queried each sample) and matched to psutil.net_io_counters(pernic=True)'s per-NIC keys using NetConnectionID. Rejected relying on psutil alone, since it has no built-in physical/virtual distinction for network interfaces. Known limitation, accepted: PhysicalAdapter occasionally misclassifies adapters created by VPN clients or virtual switches. |
+| D15 | The first sample data recording occurs after 30s of recorder being enabled |
+
+### The Storage
+
+| Decision | Description                                                  |
+| -------- | ------------------------------------------------------------ |
+| D16      | The Storage will be SQLite                                   |
+| D17      | It will store the data recorded by recorder. Display will query this DB for data. |
+| D18      | SQLite's SQL queries (time-range, aggregates) serve R9/R11 without loading whole files into memory, keeping reads within G4's 2s budget as data grows. |
+| D19      | Rejected Postgres/MySQL: needs a running server process, conflicting with G1's CPU/memory budget and the local-only non-goal. |
+| D20      | Rejected flat files (CSV/log lines): no indexed queries, no write atomicity for G8, poor fit for variable-length multi-disk/NIC data. |
+
+### The Database
+
+- The database is RDBMS
+- The tables are-> sample(id, cpu_%, battery%), memory(sample_id, free, total), disk(sample_id, partition, disk_size, used_disk), network_interface(id INTEGER PK, connection_id TEXT UNIQUE), network_io(sample_id FK, interface_id FK, bytes_sent, bytes_recv, PRIMARY KEY(sample_id, interface_id)), timestamps(sample_id, utc_timestamp, machine_timestamp, monotonic_timestamp), process(sample_id, rank, resource_top_type, process_id, process_name, cpu_%, memory_used%)
