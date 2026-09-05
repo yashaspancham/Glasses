@@ -207,11 +207,57 @@ Top Memory:
 
 ## Alternatives considered
 
-| **Choice**     | **Alternative and why it was rejected**                                                                  |
-| -------------- | -------------------------------------------------------------------------------------------------------- |
-| Nuitka         | Rejected PyInstaller: it bundles the Python interpreter into the .exe, making it bigger than a Nuitka build |
-| Python         | Developer's strongest language; fastest path to a correct, maintainable v1                               |
-| SQLite         | Rejected MySQL, PostgreSQL, MariaDB: all are server processes, bulky and conflict with G1's CPU/memory budget. SQLite is small, light, and file-based |
+| **Choice**     | **Alternative and why it was rejected**                                                                                                                                                                                         |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Nuitka         | Rejected PyInstaller: it bundles the Python interpreter into the .exe, making it bigger than a Nuitka build                                                                                                                     |
+| Python         | Developer's strongest language; fastest path to a correct, maintainable v1                                                                                                                                                      |
+| SQLite         | Rejected MySQL, PostgreSQL, MariaDB: all are server processes, bulky and conflict with G1's CPU/memory budget. SQLite is small, light, and file-based                                                                           |
 | Task Scheduler | Rejected a Windows Service: more moving parts (SCM registration, service lifecycle) for no benefit v1 needs. Rejected a per-user startup entry: doesn't satisfy G21 (must keep recording regardless of which user is logged in) |
-| SYSTEM account | Required by G21 — recording must continue across user logon/logoff and switching; a per-user account can't do that |
-| click          | Rejected argparse: too little built-in support for multi-command CLIs like this one's `now`/`last`/`at`/`top`. Rejected fire: too much magic, less control over help text and argument validation |
+| SYSTEM account | Required by G21 — recording must continue across user logon/logoff and switching; a per-user account can't do that                                                                                                              |
+| click          | Rejected argparse: too little built-in support for multi-command CLIs like this one's `now`/`last`/`at`/`top`. Rejected fire: too much magic, less control over help text and argument validation                               |
+
+## RISKS
+
+| No  | Description                                                                  |
+| --- | ---------------------------------------------------------------------------- |
+| R1  | If Recorder crashes while enabled how will it be enabled without user action |
+| R2  | The software colud be blocked by anti-virous                                 |
+| R3  | The system level recorder colud get blocked on the user level                |
+| R4  | WMI PhysicalAdapter could misclassify virtual adapters                       |
+| R5  | The storage budget might not be enough                                       |
+| R6  | The disk name could become a problem                                         |
+| R7  | Developer is not definite about psutil's cpu features(D7)                    |
+
+## Testing Strategies
+
+| Test number | Tests | Description               |
+| ----------- | ----- | ------------------------- |
+| T1          | R1    | Moniter proess which will |
+|             |       |                           |
+|             |       |                           |
+|             |       |                           |
+|             |       |                           |
+|             |       |                           |
+|             |       |                           |
+|             |       |                           |
+|             |       |                           |
+|             |       |                           |
+|             |       |                           |
+|             |       |                           |
+|             |       |                           |
+|             |       |                           |
+|             |       |                           |
+|             |       |                           |
+|             |       |                           |
+|             |       |                           |
+|             |       |                           |
+|             |       |                           |
+|             |       |                           |
+|             |       |                           |
+|             |       |                           |
+|             |       |                           |
+|             |       |                           |
+|             |       |                           |
+|             |       |                           |
+|             |       |                           |
+|             |       |                           |

@@ -1,6 +1,6 @@
 # Glasses — Progress
 
-Last updated: **2 Sep 2026**
+Last updated: **5 Sep 2026**
 
 ## What this project is
 
@@ -17,7 +17,7 @@ A PC resource monitor: a background recorder samples system usage to local stora
 | Stage | Artifact | Status |
 |---|---|---|
 | 1. Define the problem | `PRD.md` | ✅ **Approved** (Shreyas, 9 Aug 2026) |
-| 2. Design the solution | `DESIGN.md` | 🔨 In progress — Technical goals & non-goals done (G1–G26, NG1–NG9), Overview drafted with diagram. Detailed Design: "The Recorder" subsection complete (D1–D15). "The Storage" subsection drafted (D16–D20 — SQLite chosen, Postgres/MySQL and flat files rejected). "The Database" section is a full `CREATE TABLE` schema (rewritten 30 Aug). **"The Display" subsection now drafted (D21–D28, 2 Sep)** — click, timestamp format, read-only SQLite access, NULL→"-", clock-jump marker, plain text, `schtasks` check on `glasses start`, and a vertical label:value layout (with worked example) for single-point commands (`now`/`at`). **"Alternatives considered" section added (2 Sep)** — Nuitka, Python, SQLite, Task Scheduler, SYSTEM account, click, each with a rejected alternative and reason; typos and vague reasoning fixed on review pass. Range-command (`last`/`top`) table format still undecided. Risks section not yet written — candidates discussed, drafting deferred. |
+| 2. Design the solution | `DESIGN.md` | 🔨 In progress — Technical goals & non-goals done (G1–G26, NG1–NG9), Overview drafted with diagram. Detailed Design: "The Recorder" subsection complete (D1–D15). "The Storage" subsection drafted (D16–D20 — SQLite chosen, Postgres/MySQL and flat files rejected). "The Database" section is a full `CREATE TABLE` schema (rewritten 30 Aug). **"The Display" subsection now drafted (D21–D28, 2 Sep)** — click, timestamp format, read-only SQLite access, NULL→"-", clock-jump marker, plain text, `schtasks` check on `glasses start`, and a vertical label:value layout (with worked example) for single-point commands (`now`/`at`). **"Alternatives considered" section added (2 Sep)** — Nuitka, Python, SQLite, Task Scheduler, SYSTEM account, click, each with a rejected alternative and reason; typos and vague reasoning fixed on review pass. Range-command (`last`/`top`) table format still undecided. **Risks section now written (5 Sep)** — `## RISKS`, R1–R7, covering crash-loop recovery, AV false-positive, SYSTEM-account access, WMI VPN misclassification, storage-budget/`auto_vacuum`, drive-letter identity, and `psutil` CPU-behavior uncertainty (ties to D7). Reviewer-not-confirmed deliberately left out of the tracked Risks per Yashas's call. **Testing strategy — in progress**, working through the framework conversationally (test units per component, what to fake/mock, ugly-case list, requirement traceability); nothing drafted into the doc yet. |
 | 3. Break down the work | `PLAN.md` | ⬜ Not started |
 | 4. Build | PRs | ⬜ Not started |
 | 5. Test | test suite | ⬜ Not started |
@@ -120,17 +120,21 @@ From the PRD, approved:
 - **Known gaps raised and explicitly not pursued this session** (per Yashas, "not needed due to various reasons"): battery NULL ambiguity (no-battery vs. corrupt both currently NULL in schema), `--json` output, 80-column table width for row-style output, the "recorder already running" user-facing message, and lifecycle commands beyond `start` (`stop`/`status`/`uninstall`). These are not being tracked as open blockers going forward — treat as deliberately deferred, not forgotten-but-pending.
 - **Alternatives considered table** now covers Nuitka, Python, SQLite, Task Scheduler, SYSTEM account, and click, each stating what was rejected and why (e.g. SYSTEM account is required by G21 — recording must survive user logon/logoff/switching, which a per-user account can't do).
 
-### Risks — discussed, not yet written into DESIGN.md
+### Risks — written into DESIGN.md (5 Sep)
 
-Candidates surfaced in conversation on 2 Sep, to be drafted into the doc's Risks section:
+DESIGN.md now has a `## RISKS` section, R1–R7:
 
-1. Recorder crash-loops past Task Scheduler's retry limit (G5/G6) — accepted gap, no auto-recovery in v1.
-2. SQLite file doesn't shrink after pruning without `auto_vacuum` — could silently blow G2's 150MB budget.
-3. Antivirus/Defender false-positiving the Nuitka-compiled `.exe` — common for unsigned compiled Python binaries, could block install.
-4. SYSTEM account may hit Access Denied reading per-user/elevated process details via `psutil`, shrinking the top-10 list.
-5. WMI `PhysicalAdapter` misclassifying VPN/virtual adapters (already a known limitation in D14, worth restating as a Risk).
-6. Drive letter reassignment breaking `disk` table identity (keyed on `partition`).
-7. Senior engineer reviewer (Shrihari) not yet confirmed — schedule risk, blocks the review gate before any code.
+1. **R1** — Recorder crash-loops past Task Scheduler's retry limit (G5/G6); how it re-enables without user action.
+2. **R2** — Antivirus/Defender could block the Nuitka-compiled `.exe`.
+3. **R3** — The system-level (SYSTEM account) recorder could get blocked at the user level.
+4. **R4** — WMI `PhysicalAdapter` could misclassify virtual/VPN adapters.
+5. **R5** — Storage budget might not be enough (the `auto_vacuum`/file-shrink-after-pruning gap).
+6. **R6** — Drive letter reassignment could become a problem for the `disk` table's identity (keyed on `partition`).
+7. **R7** — Developer isn't yet definite about `psutil`'s CPU% behavior (ties to D7) — flagged to verify empirically rather than assume.
+
+Typos fixed on review pass (buget→budget, "name come"→"become", defiante→definite).
+
+**Deliberately not tracked as a Risk, per Yashas's call (5 Sep):** Shrihari-not-yet-confirmed-as-reviewer. Still true and unresolved — just not carried in the Risks list for now.
 
 ---
 
@@ -144,9 +148,9 @@ Candidates surfaced in conversation on 2 Sep, to be drafted into the doc's Risks
 | D4 | Schema shape | ✅ Resolved 30 Aug — full `CREATE TABLE` schema written into DESIGN.md, explicit PKs/FKs on every table, `memory`/`timestamps` folded into `sample`. Still open: gap-marker threshold and clock-change-flag representation (unchanged, see notes above) |
 | D5 | How gaps are represented | ✅ Resolved — see highlights above (G14, G15, NG6) |
 | D6 | Concurrent access | ✅ Resolved 30 Aug — **G7** via `PRAGMA journal_mode=WAL`, **G8** via one transaction per sample. **G20** (single-instance) resolved earlier via named mutex (Recorder's D6). Mechanisms are written into DESIGN.md's Database section as prose; still need promoting into the Storage D16–D20 table as D21/D22 |
-| D7 | Pruning at the size cap | **Still fully open.** Original PRD open question, never revisited. Now higher priority — see new Storage gaps (auto_vacuum/file-size risk directly threatens G2) |
+| D7 | Pruning at the size cap | **Ownership decided (5 Sep): the Recorder does the pruning**, not a separate task — not yet written into DESIGN.md. The policy itself (prune early vs. stop recording at 150MB) is still open — Yashas has deliberately deferred it for now |
 | D8 | CPU % semantics — what does the first sample report | ✅ Resolved and written into DESIGN.md this session (Recorder's D7) — covers both the recorder-startup priming call and the mid-run new-process case, both shown as `-` for their first sample |
-| D9 | Install and uninstall | Partially resolved — G11/G13 (enable/disable behavior), G25 (uninstall removes all data) are decided; mechanism now depends on D2 (resolved) but pruning ownership (R5, D7) and which component owns lifecycle commands (start/stop/status/uninstall) is still unassigned across Recorder/Storage/Display |
+| D9 | Install and uninstall | Partially resolved — G11/G13 (enable/disable behavior), G25 (uninstall removes all data) are decided; mechanism now depends on D2 (resolved). Pruning ownership now assigned to the Recorder (see D7 row). Which component owns the other lifecycle commands (start/stop/status/uninstall) is still unassigned across Recorder/Storage/Display |
 
 ---
 
@@ -177,18 +181,16 @@ Candidates surfaced in conversation on 2 Sep, to be drafted into the doc's Risks
 
 ## Next actions
 
-Picking back up next session (2 Sep progress: Display subsection D21–D28 drafted with worked example, Alternatives considered table written and cleaned up, Risks candidates discussed). Priority order:
+Picking back up next session (5 Sep progress: Risks section written into DESIGN.md as R1–R7, typos fixed, pruning ownership decided — Recorder does it — but not yet written in, Testing strategy underway conversationally). Priority order:
 
-1. **Write the Risks section into DESIGN.md** — candidates already listed above from today's discussion (crash-loop, auto_vacuum/file size, AV false positive, SYSTEM per-user access, WMI VPN misclassification, drive letter reassignment, reviewer not confirmed). Trim/adjust before writing.
-2. **Decide the range-command (`last`/`top`) table format** — summary block (peak/average, matching R9) vs. row-per-sample table with a gap marker. Only the single-point (`now`/`at`) layout is settled so far (D28).
-3. **Decide D7 — pruning at the size cap.** Still open: prune early (oldest-first) vs. stop recording if 150MB is hit before 30 days. Only Yashas can make this tradeoff call; downstream items (4, 5) depend on it.
-4. **Decide the `auto_vacuum`/`VACUUM` strategy** — without it, deleting old rows doesn't shrink the `.db` file, which can silently blow the G2 150MB budget even with correct pruning.
-5. **Assign pruning ownership** — Recorder runs the age-based DELETE inline (how often?) vs. a separate task.
+1. **Write the Testing strategy section into DESIGN.md** — in progress conversationally (test units per component, what to fake/mock, ugly-case list, requirement traceability). Not yet drafted into the doc.
+2. **Decide D7 — pruning policy at the size cap.** Ownership is settled (Recorder), but the policy itself — prune early (oldest-first) vs. stop recording if 150MB is hit before 30 days — is still open. Deliberately deferred by Yashas for now; downstream items (3, 4) depend on it.
+3. **Decide the `auto_vacuum`/`VACUUM` strategy** — without it, deleting old rows doesn't shrink the `.db` file, which can silently blow the G2 150MB budget even with correct pruning.
+4. Write the pruning-ownership decision (Recorder) and D7's eventual policy into DESIGN.md's Storage/Recorder sections once D7 is settled.
+5. **Decide the range-command (`last`/`top`) table format** — summary block (peak/average, matching R9) vs. row-per-sample table with a gap marker. Only the single-point (`now`/`at`) layout is settled so far (D28).
 6. Decide WAL checkpoint strategy and state the DB file path (parallel to D4's log path).
 7. Promote the WAL/per-sample-transaction mechanisms out of Database-section prose into the Storage decision table as D29/D30 (D21–D28 are now taken by Display).
-8. Write crash/restart resume (G5/G6) into the new Risks section — already listed as candidate #1 above.
-9. Decide and write down the gap-marker threshold (candidate: 45s) and clock-change detection ownership (leaning Display-side) — separate from D25's clock-jump marker, which covers the divergence case, not the "system was off" gap case.
-10. Write Testing strategy, Open issues.
-11. Confirm Shrihari as senior engineer reviewer.
-12. Send DESIGN for review before writing any code.
-13. Create the repo and protect `main`.
+8. Decide and write down the gap-marker threshold (candidate: 45s) and clock-change detection ownership (leaning Display-side) — separate from D25's clock-jump marker, which covers the divergence case, not the "system was off" gap case.
+9. Write Open issues section.
+10. Send DESIGN for review before writing any code. (Confirming Shrihari as reviewer is deprioritized for now, per Yashas's call — not being tracked as an active blocker.)
+11. Create the repo and protect `main`.
